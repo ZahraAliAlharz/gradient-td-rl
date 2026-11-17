@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gradient-td-rl"
+version = "0.1.0"
+description = "Baird's counterexample: off-policy semi-gradient TD(0) diverges, GTD2/TDC provably don't. Includes a closed-form MSPBE computed by exact linear algebra, not just simulation."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
