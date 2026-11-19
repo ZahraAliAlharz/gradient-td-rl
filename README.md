@@ -123,46 +123,91 @@ the version of "fix the target" with an actual convergence guarantee,
 verified here against the exact objective rather than inferred from a
 training curve not blowing up.
 
-### 3. Both gradient-TD methods have their own step-size cliff — not immune, just differently sensitive
+### 3. The step-size cliff has a derivable cause, and it isn't the two-timescale explanation I started with
 
 ![Beta sensitivity](results/bairds_beta_sensitivity.png)
 
-Holding `alpha=0.005` fixed and sweeping the auxiliary-vector step size
-`beta`:
+The original beta sweep above (alpha=0.005 fixed) showed both methods
+diverging somewhere between beta=0.05 (stable) and beta=0.075 (diverges),
+and I initially attributed this to the two-timescale requirement being
+"violated in the other direction." That explanation doesn't actually hold
+up: GTD2 and TDC share the exact same update for the auxiliary vector `v`,
+`v += beta*rho*(delta - phi@v)*phi`, and projecting that update onto the
+current `phi` shows the existing value of `v` along `phi` gets rescaled by
+`(1 - beta*rho*||phi||^2)` every step. Once `beta*rho*||phi||^2` exceeds 2,
+that factor's magnitude exceeds 1 and `v` (and from there `w`) can grow
+without bound. That gives a predicted cliff
 
-| beta | GTD2 final MSPBE | TDC final MSPBE |
+```
+beta* = 2 / (rho_max * max_s ||phi(s)||^2)
+```
+
+with no `alpha` term in it at all. For Baird's star, `rho_max=7` (the
+importance ratio on "solid" steps) and `||phi(s)||^2=5` for every state, so
+`beta* = 2/35 ≈ 0.057` — sitting exactly between the observed stable and
+divergent betas above. This is the same style of argument behind
+step-size stability limits for LMS-type stochastic updates (`x += mu*e*phi`
+needs `mu*||phi||^2 < 2`); I haven't verified a citable source for this
+exact instantaneous form, so take the analogy as structural, not a citation.
+
+`experiments/sweep_beta_cliff.py` tests this prediction across six setups
+that each move it: scaling every feature (`c=0.5`, `c=2`), changing the
+behavior policy's `P(solid)` (`1/4`, `1/10`), and a full-column-rank
+variant that drops Baird's deliberate 8th shared feature in favor of
+one-hot features (rank 7, not 7-of-8). 15 beta values per setup (0.6x–1.6x
+the prediction), both algorithms, 3 alpha values, 10 seeds each:
+
+| Setup | Predicted beta* | Observed cliff (range, GTD2/TDC x alpha) |
 |---|---|---|
-| 0.005 | 5.4 x 10^-5 | 5.4 x 10^-5 |
-| 0.01 | 5.4 x 10^-5 | 5.4 x 10^-5 |
-| 0.025 | 5.4 x 10^-5 | 5.4 x 10^-5 |
-| 0.05 | 5.4 x 10^-5 | 5.4 x 10^-5 |
-| 0.075 | diverges | diverges |
-| 0.1 | diverges | diverges |
+| Default (Baird's star, rank-deficient) | 0.057 | 0.063 – 0.071 |
+| Default, 100,000 steps | 0.057 | 0.059 – 0.071 |
+| Features x 0.5 | 0.229 | 0.251 – 0.284 |
+| Features x 2 | 0.014 | 0.016 – 0.018 |
+| P(solid) = 1/4 | 0.100 | 0.103 – 0.110 |
+| P(solid) = 1/10 | 0.040 | 0.044 – 0.055 |
+| Full-rank features (one-hot, rank 7) | 0.286 | 0.294 – 0.314 |
 
-I expected gradient-TD's advantage over naive TD to be unconditional
-convergence; what I actually found is a clean, reproducible step-size
-boundary in `beta` alone — both methods fail at the *same* beta
-regardless of alpha, which points at the auxiliary variable `v`'s own
-update (which depends only on `beta`, not `alpha`) rather than anything
-about the main weight update. Two-timescale theory requires `beta` to
-dominate `alpha`, not to be arbitrarily large — this is the boundary
-where that requirement stops being satisfiable and starts being
-violated in the other direction.
+![Predicted vs. observed beta cliff](results/beta_cliff_predicted_vs_observed.png)
+
+The prediction holds across all six setups, including the full-rank one:
+**the cliff is not specific to Baird's rank-deficient construction.** It's
+the general step-size bound on `v`'s own update, independent of whether
+`Phi` has full column rank.
+
+Caveats, not swept under the rug:
+
+- The bound is a necessary condition for `v`'s recursion treating `w` as
+  fixed (the two-timescale assumption), not a full joint-stability proof
+  of the coupled `(v, w)` system — which is likely why the observed cliff
+  sits consistently *above* the prediction (3-25% higher) rather than
+  exactly on it: crossing the bound makes growth possible, not
+  instantaneous, so a finite run needs some further steps to actually
+  blow past the divergence threshold.
+- That finite-horizon gap shrinks with more steps: the default setup's
+  100,000-step observed cliff (0.059-0.071) sits closer to the 0.057
+  prediction than the 20,000-step one (0.063-0071) does.
+- Alpha does shift the observed cliff slightly (e.g. default setup: 0.063
+  at alpha=0.001 vs. 0.071 at alpha=0.01) — "fails at the same beta
+  regardless of alpha" was never actually tested in the original sweep,
+  which only used alpha=0.005. The effect is real but small next to the
+  predicted bound's own range across setups (0.014 to 0.286, a 20x span).
 
 ## Repository layout
 
 ```
 src/gradient_td_rl/
-  envs/bairds_star.py   # the 7-state MDP, feature matrix, transition matrices, stationary distribution
+  envs/bairds_star.py   # the 7-state MDP: feature matrix (+ scale/full-rank variants), transition matrices, stationary distribution, predicted_beta_cliff()
   mspbe.py                # closed-form Mean-Squared Projected Bellman Error (2 independent code paths)
   agents/semi_gradient_td.py  # naive off-policy TD(0) (expected to diverge)
   agents/gtd2.py               # GTD2 (Sutton, Maei & Precup, 2009)
   agents/tdc.py                 # TDC / GTD with gradient correction
   metrics.py                     # training loop, tracks ||w|| and exact MSPBE jointly
+  vectorized.py                   # seed-vectorized GTD2/TDC update, cross-checked against the scalar classes above; used by the beta-cliff sweep
   train.py                       # single-run CLI
 experiments/
-  sweep_bairds_star.py            # generates both results/*.png figures
-tests/                              # includes the rank-deficiency and cross-check tests described above
+  sweep_bairds_star.py            # generates both results/bairds_*.png figures
+  sweep_beta_cliff.py              # tests predicted_beta_cliff() against simulation across 6 setups; generates results/beta_cliff.csv and results/beta_cliff_predicted_vs_observed.png
+tests/                              # includes the rank-deficiency, cross-check, and vectorized-vs-scalar agreement tests described above
 ```
 
 ## Usage
@@ -173,6 +218,9 @@ python -m gradient_td_rl.train --algorithm tdc
 
 # Full experiment that regenerates the figures above
 python experiments/sweep_bairds_star.py
+
+# Tests predicted_beta_cliff() against simulation across 6 setups (~9 min)
+python experiments/sweep_beta_cliff.py
 ```
 
 ## What I'd do next
@@ -180,10 +228,10 @@ python experiments/sweep_bairds_star.py
 - Implement Emphatic TD (Sutton, Mahmood & White, 2016), a different
   (simpler-to-state, trickier-to-tune) fix for the same off-policy
   divergence problem, and compare its convergence rate to GTD2/TDC here.
-- Extend the closed-form MSPBE machinery to a slightly larger chain
-  where `Phi` is full column rank, to see whether the beta sensitivity
-  found above is specific to Baird's rank-deficient construction or a
-  more general property of the two-timescale update.
+- Replace the necessary-condition argument behind `beta*` with an actual
+  joint-stability proof of the coupled `(v, w)` system, since the
+  consistent (if small) gap between predicted and observed cliffs
+  suggests the current bound isn't the full story.
 - Try Double Q-learning-style target estimation in `deep-q-rl` and see
   whether it closes any of the gap to the guaranteed convergence shown
   here, now that there's a concrete, provably-correct comparison point.

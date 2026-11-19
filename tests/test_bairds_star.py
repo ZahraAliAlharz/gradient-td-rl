@@ -3,6 +3,7 @@ import numpy as np
 from gradient_td_rl.envs.bairds_star import (
     BairdsStar, BEHAVIOR_POLICY, TARGET_POLICY, N_STATES, PHI, TOP_STATE,
     transition_matrix, stationary_distribution, importance_ratio, SOLID, DASHED,
+    build_feature_matrix, predicted_beta_cliff,
 )
 
 
@@ -63,3 +64,42 @@ def test_empirical_state_visitation_matches_uniform_stationary_distribution():
 def test_importance_ratio():
     assert np.isclose(importance_ratio(SOLID), 7.0)
     assert np.isclose(importance_ratio(DASHED), 0.0)
+
+
+def test_predicted_beta_cliff_is_2_over_35_for_the_default_setup():
+    # rho_max = 7 (solid), ||phi(s)||^2 = 5 for every state (2^2+1^2 or
+    # 1^2+2^2), so beta* = 2/(7*5) = 2/35 -- between the observed stable
+    # 0.05 and divergent 0.075 in the original beta sweep.
+    assert np.isclose(predicted_beta_cliff(BEHAVIOR_POLICY, PHI), 2.0 / 35.0)
+
+
+def test_stationary_distribution_for_p_solid_quarter_sums_to_one_and_matches_simulation():
+    # p_solid=1/4 breaks the uniform-stationary-distribution special case
+    # (that was specific to 1/7), so this is a real computation, checked
+    # against simulation the same way the default case already is.
+    behavior = {SOLID: 0.25, DASHED: 0.75}
+    p_behavior = transition_matrix(behavior)
+    d = stationary_distribution(p_behavior)
+    assert np.isclose(d.sum(), 1.0)
+    assert np.all(d >= -1e-10)
+
+    env = BairdsStar(seed=0, p_solid=0.25)
+    state = env.reset()
+    counts = np.zeros(N_STATES)
+    n_steps = 200_000
+    for _ in range(n_steps):
+        action = env.sample_behavior_action()
+        state, _ = env.step(action)
+        counts[state] += 1
+    empirical = counts / n_steps
+    assert np.allclose(empirical, d, atol=0.01)
+
+
+def test_full_rank_feature_matrix_has_full_column_rank():
+    # Baird's original 8-feature matrix is deliberately rank-deficient
+    # (rank 7, see test_mspbe.py). The full-rank variant drops the shared
+    # feature and uses one-hot features instead, so it should actually
+    # have full column rank.
+    phi = build_feature_matrix(full_rank=True)
+    assert phi.shape == (N_STATES, N_STATES)
+    assert np.linalg.matrix_rank(phi) == phi.shape[1]
