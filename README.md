@@ -176,16 +176,33 @@ the general step-size bound on `v`'s own update, independent of whether
 
 Caveats, not swept under the rug:
 
-- The bound is a necessary condition for `v`'s recursion treating `w` as
-  fixed (the two-timescale assumption), not a full joint-stability proof
-  of the coupled `(v, w)` system — which is likely why the observed cliff
-  sits consistently *above* the prediction (3-25% higher) rather than
-  exactly on it: crossing the bound makes growth possible, not
-  instantaneous, so a finite run needs some further steps to actually
-  blow past the divergence threshold.
-- That finite-horizon gap shrinks with more steps: the default setup's
-  100,000-step observed cliff (0.059-0.071) sits closer to the 0.057
-  prediction than the 20,000-step one (0.063-0071) does.
+- The bound is a **sufficient condition for stability, not a necessary
+  one for divergence** — direction matters here. For `beta <= beta*`,
+  every per-state factor `(1 - beta*rho*||phi||^2)` has magnitude `<= 1`,
+  so `v`'s homogeneous recursion (`w` held fixed) can't grow along any
+  single direction; crossing `beta*` only makes growth *possible* along
+  that one direction. Baird's six lower states all share the 8th
+  feature, so one direction expanding doesn't force the whole system to
+  blow up — which is why the observed cliff sits consistently *above*
+  the prediction (2.9-38.6% higher, see table and the grid caveat
+  below) instead of exactly on it.
+- The specific percentages above are grid points, not measured gaps:
+  `observed_cliff` is the smallest of only 15 beta values (spaced ~7.1%
+  of `beta*` apart, 0.6x to 1.6x) where at least half the seeds
+  diverged, and those 15 grid points land at exactly 2.9%, 10.0%,
+  17.1%, 24.3%, ... above `beta*` regardless of setup. So "full-rank's
+  gap ties with `P(solid) = 1/4`" would be an artifact of that shared
+  grid, not a real finding — the resolution is too coarse to rank
+  setups against each other. What *is* robust: every one of the six
+  setups' observed cliffs landed strictly above its own `beta*` (by
+  2.9-38.6%, i.e. never below), which is exactly what "necessary but
+  not sufficient for divergence" predicts.
+- The one finite-horizon comparison that *is* meaningful despite the
+  coarse grid is same-setup, same-grid: the default setup's
+  100,000-step run's low end moved one grid step closer to `beta*`
+  (0.063 at the 20,000-step mark to 0.059 at 100,000) — a single step
+  on a 7.1%-spaced grid, not a strong trend. The high end of both runs
+  (0.071) is unchanged.
 - Alpha does shift the observed cliff slightly (e.g. default setup: 0.063
   at alpha=0.001 vs. 0.071 at alpha=0.01) — "fails at the same beta
   regardless of alpha" was never actually tested in the original sweep,
@@ -228,10 +245,13 @@ python experiments/sweep_beta_cliff.py
 - Implement Emphatic TD (Sutton, Mahmood & White, 2016), a different
   (simpler-to-state, trickier-to-tune) fix for the same off-policy
   divergence problem, and compare its convergence rate to GTD2/TDC here.
-- Replace the necessary-condition argument behind `beta*` with an actual
-  joint-stability proof of the coupled `(v, w)` system, since the
-  consistent (if small) gap between predicted and observed cliffs
-  suggests the current bound isn't the full story.
+- Prove stability of the joint `(v, w)` system directly, rather than the
+  per-state, `w`-held-fixed argument behind `beta*`. Relatedly, find each
+  setup's cliff by bisection instead of a fixed 15-point grid (~0.5%
+  resolution instead of ~7%) to actually test whether orthogonal
+  (full-rank) features produce a smaller predicted-observed gap than
+  overlapping ones, as the overlap argument above suggests they should —
+  the current grid is too coarse to tell.
 - Try Double Q-learning-style target estimation in `deep-q-rl` and see
   whether it closes any of the gap to the guaranteed convergence shown
   here, now that there's a concrete, provably-correct comparison point.
